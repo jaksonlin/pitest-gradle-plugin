@@ -83,6 +83,7 @@ publishing {
 
 run `gradle publishToMavenLocal` to publish to local maven
 run `gradle publish` to publish to the configured remote maven
+run `gradle mutest --refresh-dependencies` to run mutest with the local maven and refresh the dependencies (if we have some change on the code and re-publish without version change, we need to run `mutest --refresh-dependencies` to get the latest dependencies)
 
 ## build and publish to local maven
 

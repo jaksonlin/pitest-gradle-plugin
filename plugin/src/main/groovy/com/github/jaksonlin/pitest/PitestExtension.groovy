@@ -7,4 +7,7 @@ class PitestExtension {
     int timeoutConst = 5000
     List<String> outputFormats = ['XML']
     String jacocoReportPath =  '$project.buildDir/../../target/jacoco/jacocoTest.exec'
+    List<String> additionalClasspathElements = []
+    List<String> additionalJarDirectories = []
+    String pitestJarsDirectory = null
 }

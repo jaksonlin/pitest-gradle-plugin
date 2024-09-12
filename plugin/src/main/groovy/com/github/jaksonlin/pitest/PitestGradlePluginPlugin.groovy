@@ -69,6 +69,23 @@ class PitestPlugin implements Plugin<Project> {
                 def classpath = project.sourceSets.test.runtimeClasspath + project.sourceSets.main.runtimeClasspath
                 inputs.files classpath
 
+                extension.additionalClasspathElements.each { element ->
+                    classpath += project.files(element)
+                }
+
+                config.additionalJarDirectories.each { dirPath ->
+                    def dir = new File(dirPath)
+                    if (dir.exists() && dir.isDirectory()) {
+                        dir.eachFileRecurse(groovy.io.FileType.FILES) { file ->
+                            if (file.name.endsWith('.jar')) {
+                                classpath += project.files(file)
+                            }
+                        }
+                    } else {
+                        project.logger.warn("Directory not found or is not a directory: $dirPath")
+                    }
+                }
+
                 // Create classpath file
                 def classpathFile = project.file('pitest-classpath.txt')
                 classpathFile.withWriter { writer ->
@@ -78,7 +95,21 @@ class PitestPlugin implements Plugin<Project> {
                 }
 
                 // Dynamically gather Pitest JARs
-                def pitestJars = project.configurations.testRuntimeClasspath.filter { it.name.startsWith("pitest-") }
+                def pitestJars
+                if (config.pitestJarsDirectory) {
+                    def pitestDir = new File(config.pitestJarsDirectory)
+                    if (pitestDir.exists() && pitestDir.isDirectory()) {
+                        pitestJars = pitestDir.listFiles().findAll { it.name.startsWith("pitest-") && it.name.endsWith(".jar") }
+                    } else {
+                        project.logger.warn("Pitest JARs directory not found or is not a directory: ${config.pitestJarsDirectory}")
+                        // Fallback to default logic
+                        pitestJars = project.configurations.testRuntimeClasspath.filter { it.name.startsWith("pitest-") }
+                    }
+                } else {
+                    // Use default logic if pitestJarsDirectory is not specified
+                    pitestJars = project.configurations.testRuntimeClasspath.filter { it.name.startsWith("pitest-") }
+                }
+                
                 def pitestCp = pitestJars.collect { it.absolutePath }.join(File.pathSeparator)
 
                 // Concisely build sourceDirs
