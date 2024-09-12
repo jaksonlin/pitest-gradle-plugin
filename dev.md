@@ -63,19 +63,22 @@ func handleUpload(c *gin.Context) {
 ## add build.gradle to publish to local maven
 
 ```
- publishing {
-       repositories {
-           maven {
-               name = "InternalRepo"
-               url = "http://server_address:8080/maven-repo"
-               // If authentication is required:
-               // credentials {
-               //     username = "user"
-               //     password = "password"
-               // }
-           }
-       }
-   }
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            from components.java
+            groupId = project.group
+            artifactId = 'pitest-gradle-plugin'
+            version = project.version
+        }
+    }
+    repositories {
+        maven {
+            name = "TestRepo"
+            url = "http://xxx.xx.xx.xx:8080/maven-repo"
+        }
+    }
+}
 ```
 
 run `gradle publishToMavenLocal` to publish to local maven
