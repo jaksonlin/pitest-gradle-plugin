@@ -73,30 +73,35 @@ class PitestPlugin implements Plugin<Project> {
     }
 
     private boolean runPitestForClass(Project project, String testClassName, PitestExtension extension) {
-        try {
-            def taskName = "pitest-$testClassName"
-            project.task(taskName, type: org.gradle.api.tasks.Exec) {
-                def logFiles = createLogFiles(project, testClassName)
-                workingDir project.projectDir
-
-                def classpath = buildClasspath(project, extension)
-                def classpathFile = createClasspathFile(project, testClassName, classpath)
+        try {            
+            def logFiles = createLogFiles(project, testClassName)
+            def classpath = buildClasspath(project, extension)
+            def classpathFile = createClasspathFile(project, testClassName, classpath)
                 def pitestCp = getPitestClasspath(project, extension)
                 def sourceDirs = getSourceDirs(project)
                 def targetClass = getTargetClass(testClassName)
                 def reportDir = getReportDir(project, targetClass)
 
                 def pitestCommand = buildPitestCommand(extension, project, reportDir, sourceDirs, targetClass, testClassName, classpathFile, pitestCp)
-                
+                project.logger.info("Pitest command for $testClassName: ${pitestCommand.join(' ')}")
+            
+                if (pitestCommand.isEmpty()) {
+                    project.logger.error("Pitest command is empty for $testClassName")
+                    return false
+                }
+
                 logCommand(logFiles.commandLog, pitestCommand)
-                def result = executePitestCommand(pitestCommand, logFiles)
                 if (extension.useByteBuddyAgent) {
                     project.logger.info("Running Pitest with ByteBuddy agent for $testClassName")
                 } else {
                     project.logger.info("Running Pitest without ByteBuddy agent for $testClassName")
                 }
+
+                def result = executePitestCommand(pitestCommand, logFiles)
+                
                 switch (result) {
                     case PitestResult.SUCCESS:
+                        project.logger.info("Pitest succeeded for $testClassName")
                         return true
                     case PitestResult.NO_MUTATIONS:
                         project.logger.info("No mutations found for $testClassName. This is likely a POJO or empty class.")
@@ -106,7 +111,6 @@ class PitestPlugin implements Plugin<Project> {
                         def rerunCommand = pitestCommand.join(' ')
                         project.logger.error("Command to rerun Pitest:")
                         project.logger.error(rerunCommand)
-                        
                         // Append rerun command to the command log file
                         logFiles.commandLog.append("\n\nRerun command:\n${rerunCommand}")
                         
@@ -121,13 +125,11 @@ class PitestPlugin implements Plugin<Project> {
                             }
                         }
                         return false
+                    default:
+                        project.logger.error("Unknown Pitest result: $result")
+                        return false
                 }
 
-                return true
-            }
-
-            project.tasks[taskName].execute()
-            return true
         } catch (Exception ex) {
             project.logger.error("Error running Pitest for $testClassName: ${ex.message}")
             ex.printStackTrace()
@@ -211,7 +213,14 @@ class PitestPlugin implements Plugin<Project> {
             project.logger.warn("Some dependencies might be missing. Pitest may fail or have limited functionality.")
         }
 
-        return pitestJars.collect { it.absolutePath }.join(File.pathSeparator)
+        def classpath = pitestJars.collect { it.absolutePath }.join(File.pathSeparator)
+    
+        if (classpath.isEmpty()) {
+            project.logger.error("Pitest classpath is empty")
+            throw new IllegalStateException("Pitest classpath is empty")
+        }
+        
+        return classpath
     }
 
     private Set<File> getPitestJars(Project project, PitestExtension extension) {
@@ -264,6 +273,15 @@ class PitestPlugin implements Plugin<Project> {
     }
 
     private List<String> buildPitestCommand(PitestExtension extension, Project project, File reportDir, String sourceDirs, String targetClass, String testClassName, File classpathFile, String pitestCp) {
+        assert extension != null : "Extension is null"
+        assert project != null : "Project is null"
+        assert reportDir != null : "Report directory is null"
+        assert sourceDirs != null : "Source directories are null"
+        assert targetClass != null : "Target class is null"
+        assert testClassName != null : "Test class name is null"
+        assert classpathFile != null : "Classpath file is null"
+        assert pitestCp != null : "Pitest classpath is null"
+
         // replicate the agent option in starting the java, so that in the separated jvm forked by pitest, it will have byte buddy agent to fix the issue of inline mockito
         def byteBuddyAgent = project.configurations.testRuntimeClasspath.find { it.name.contains('byte-buddy-agent') }
     
