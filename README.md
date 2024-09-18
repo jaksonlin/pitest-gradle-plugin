@@ -8,6 +8,9 @@ This is a Gradle plugin for running Pitest mutation testing. It is designed to b
 - Integration with Jacoco for code coverage analysis
 - Support for running tests in parallel
 - Support to run pitest for passed class only
+- Support to add additional required jars
+- Support to change pitest jar by specifying the directory
+- Support running pitest on not green test suite. for a test suite contains dozens of failure test classes, we can still evaluate the mutation score for the passed test classes. This is achieved by matching the test class name with the test cases in the Junit event hook, <ClassName>Test or Test<ClassName>, if the naming convetion is not of this format, you can specify the test cases for the test class in the `includedTestNGGroups` or `excludedTestNGGroups`
 
 ## Setup
 
@@ -47,6 +50,14 @@ dependencies {
 }
 ```
 
+- Or you can specify the directory of Pitest jars:
+
+```groovy
+pitestConfig {
+    pitestJarsDirectory = 'libs'
+}
+```
+
 4. Configure the Pitest plugin:
 
 ```groovy
@@ -56,8 +67,19 @@ pitest {
     threads = 4
     timeoutConst = 5000
     jacocoReportPath = "$project.buildDir/../../target/jacoco/jacocoTest.exec"
+    additionalRequiredJars = ['commons-text', 'commons-lang3', 'byte-buddy-agent']
+    additionalJarDirectories = ['libs']
+    pitestJarsDirectory = '<path to pitest jars>'
 }
 ```
+
+for additionalRequiredJars, you can specify the jars that are not in the Pitest distribution package, for example, you can add dependencies that are not in the classpath when running pitest.
+
+In addition, in order to generate XML format report, `commons-text` and `commons-lang3` are required, and you should keep them in `additionalRequiredJars`, and the plugin will lookup these jars in the `additionalJarDirectories`.
+
+As for `byte-buddy-agent`, it is to address the issue that mockito may fail to initialize inline mock maker in some old version of JDK, and to resolve the issue, we need to load the `byte-buddy-agent` in Pitest as java agent, so that when a new JVM is started by Pitest, the inline mock maker can be initialized. You can remove it if you don't need to use mockito inline mock maker.
+
+To make the test execution stable, we also add the `byte-buddy-agent` for the test execution environment.
 
 
 5. Ensure your test classes follow the naming convention: `Test{ClassName}` or `{ClassName}Test`.
@@ -83,5 +105,7 @@ This will:
 - Jacoco reports are appended to `target/jacoco/jacocoTest.exec`.
 - Pitest reports are generated in XML format.
 - Failed tests are skipped for Pitest analysis.
+- The plugin will only run pitest on test classes that the test cases for them are passed.
+
 
 

@@ -5,13 +5,21 @@ import org.gradle.api.Project
 import org.gradle.api.tasks.testing.Test
 import org.gradle.api.tasks.testing.TestResult
 
+
 class PitestPlugin implements Plugin<Project> {
+    private enum PitestResult {
+        SUCCESS, NO_MUTATIONS, FAILURE
+    }
+
     void apply(Project project) {
         // Create the extension
         def extension = project.extensions.create('pitestConfig', PitestExtension)
 
         // Apply the Java plugin if not already applied
         project.plugins.apply('java')
+
+        // Configure ByteBuddy agent
+        configureByteBuddyAgent(project)
 
         project.task('mutest', type: Test) {
             doFirst {
@@ -78,30 +86,41 @@ class PitestPlugin implements Plugin<Project> {
                 def targetClass = getTargetClass(testClassName)
                 def reportDir = getReportDir(project, targetClass)
 
-                def pitestCommand = buildPitestCommand(extension, reportDir, sourceDirs, targetClass, testClassName, classpathFile, pitestCp)
+                def pitestCommand = buildPitestCommand(extension, project, reportDir, sourceDirs, targetClass, testClassName, classpathFile, pitestCp)
                 
                 logCommand(logFiles.commandLog, pitestCommand)
-                def success = executePitestCommand(pitestCommand, logFiles)
-                if (!success) {
-                    project.logger.error("Pitest failed for $testClassName")
-                    def rerunCommand = pitestCommand.join(' ')
-                    project.logger.error("Command to rerun Pitest:")
-                    project.logger.error(rerunCommand)
-                    
-                    // Append rerun command to the command log file
-                    logFiles.commandLog.append("\n\nRerun command:\n${rerunCommand}")
-                    
-                    if (extension.tuningMode) {
-                        def missingClasses = findMissingClasses(logFiles.errorLog)
-                        if (missingClasses) {
-                            project.logger.error("Missing class files detected:")
-                            missingClasses.each { project.logger.error(it) }
-                            
-                            // Append missing classes to the command log file
-                            logFiles.commandLog.append("\n\nMissing class files:\n${missingClasses.join('\n')}")
+                def result = executePitestCommand(pitestCommand, logFiles)
+                if (extension.useByteBuddyAgent) {
+                    project.logger.info("Running Pitest with ByteBuddy agent for $testClassName")
+                } else {
+                    project.logger.info("Running Pitest without ByteBuddy agent for $testClassName")
+                }
+                switch (result) {
+                    case PitestResult.SUCCESS:
+                        return true
+                    case PitestResult.NO_MUTATIONS:
+                        project.logger.info("No mutations found for $testClassName. This is likely a POJO or empty class.")
+                        return true
+                    case PitestResult.FAILURE:
+                        project.logger.error("Pitest failed for $testClassName")
+                        def rerunCommand = pitestCommand.join(' ')
+                        project.logger.error("Command to rerun Pitest:")
+                        project.logger.error(rerunCommand)
+                        
+                        // Append rerun command to the command log file
+                        logFiles.commandLog.append("\n\nRerun command:\n${rerunCommand}")
+                        
+                        if (extension.tuningMode) {
+                            def missingClasses = findMissingClasses(logFiles.errorLog)
+                            if (missingClasses) {
+                                project.logger.error("Missing class files detected:")
+                                missingClasses.each { project.logger.error(it) }
+                                
+                                // Append missing classes to the command log file
+                                logFiles.commandLog.append("\n\nMissing class files:\n${missingClasses.join('\n')}")
+                            }
                         }
-                    }
-                    return false
+                        return false
                 }
 
                 return true
@@ -142,6 +161,14 @@ class PitestPlugin implements Plugin<Project> {
             addJarsFromDirectory(project, classpath, dirPath)
         }
         
+        // Ensure necessary JARs are in the classpath
+        extension.additionalRequiredJars.each { jarName ->
+            def jar = findJar(project, extension, jarName)
+            if (jar) {
+                classpath.add(jar)
+            }
+        }
+        
         return classpath
     }
 
@@ -168,18 +195,60 @@ class PitestPlugin implements Plugin<Project> {
 
     private String getPitestClasspath(Project project, PitestExtension extension) {
         def pitestJars = getPitestJars(project, extension)
+        def additionalJars = extension.additionalRequiredJars.collect { jarName ->
+            findJar(project, extension, jarName)
+        }.findAll { it != null }
+        
+        pitestJars.addAll(additionalJars)
+        
+        additionalJars.each { jar ->
+            if (jar) {
+                project.logger.info("Added ${jar.name} to Pitest classpath")
+            }
+        }
+        
+        if (additionalJars.size() < extension.additionalRequiredJars.size()) {
+            project.logger.warn("Some dependencies might be missing. Pitest may fail or have limited functionality.")
+        }
+
         return pitestJars.collect { it.absolutePath }.join(File.pathSeparator)
     }
 
     private Set<File> getPitestJars(Project project, PitestExtension extension) {
+        def pitestJars = new HashSet<File>()
         if (extension.pitestJarsDirectory) {
             def pitestDir = new File(extension.pitestJarsDirectory)
             if (pitestDir.exists() && pitestDir.isDirectory()) {
-                return pitestDir.listFiles().findAll { it.name.startsWith("pitest-") && it.name.endsWith(".jar") }.toSet()
+                pitestJars.addAll(pitestDir.listFiles().findAll { it.name.startsWith("pitest-") && it.name.endsWith(".jar") })
+            } else {
+                project.logger.warn("Pitest JARs directory not found or is not a directory: ${extension.pitestJarsDirectory}")
             }
-            project.logger.warn("Pitest JARs directory not found or is not a directory: ${extension.pitestJarsDirectory}")
         }
-        return project.configurations.testRuntimeClasspath.files.findAll { it.name.startsWith("pitest-") }.toSet()
+        if (pitestJars.isEmpty()) {
+            pitestJars.addAll(project.configurations.testRuntimeClasspath.files.findAll { it.name.startsWith("pitest-") })
+        }
+        return pitestJars
+    }
+
+    private File findJar(Project project, PitestExtension extension, String jarNamePart) {
+        // Look in the project's runtime classpath
+        def jar = project.configurations.runtimeClasspath.find { it.name.contains(jarNamePart) }
+        
+        // If not found, search in additional JAR directories
+        if (!jar) {
+            extension.additionalJarDirectories.each { dirPath ->
+                def dir = new File(dirPath)
+                if (dir.exists() && dir.isDirectory()) {
+                    def foundJar = dir.listFiles().find { it.name.contains(jarNamePart) && it.name.endsWith('.jar') }
+                    if (foundJar) {
+                        jar = foundJar
+                        return true // break the each loop
+                    }
+                }
+            }
+        }
+        
+        return jar
     }
 
     private String getSourceDirs(Project project) {
@@ -194,9 +263,21 @@ class PitestPlugin implements Plugin<Project> {
         return project.file("build/reports/pitest/$targetClass")
     }
 
-    private List<String> buildPitestCommand(PitestExtension extension, File reportDir, String sourceDirs, String targetClass, String testClassName, File classpathFile, String pitestCp) {
+    private List<String> buildPitestCommand(PitestExtension extension, Project project, File reportDir, String sourceDirs, String targetClass, String testClassName, File classpathFile, String pitestCp) {
+        // replicate the agent option in starting the java, so that in the separated jvm forked by pitest, it will have byte buddy agent to fix the issue of inline mockito
+        def byteBuddyAgent = project.configurations.testRuntimeClasspath.find { it.name.contains('byte-buddy-agent') }
+    
         def command = [
-            'java', '-cp', pitestCp, 'org.pitest.mutationtest.commandline.MutationCoverageReport',
+            'java'
+        ]
+        
+        if (extension.useByteBuddyAgent && byteBuddyAgent) {
+            command += ["-javaagent:${byteBuddyAgent.absolutePath}"]
+        }
+        
+        command += [
+            '-cp', pitestCp,
+            'org.pitest.mutationtest.commandline.MutationCoverageReport',
             '--reportDir', reportDir.toString(),
             '--sourceDirs', sourceDirs,
             '--targetClasses', targetClass,
@@ -239,7 +320,7 @@ class PitestPlugin implements Plugin<Project> {
         commandLogFile.text = pitestCommand.join(' ')
     }
 
-    private boolean executePitestCommand(List<String> pitestCommand, Map logFiles) {
+    private PitestResult executePitestCommand(List<String> pitestCommand, Map logFiles) {
         def process = pitestCommand.execute()
         def output = new StringBuilder()
         def error = new StringBuilder()
@@ -249,7 +330,13 @@ class PitestPlugin implements Plugin<Project> {
         logFiles.outputLog.text = output.toString()
         logFiles.errorLog.text = error.toString()
 
-        return process.exitValue() == 0
+        if (process.exitValue() == 0) {
+            return PitestResult.SUCCESS
+        } else if (output.toString().contains("No mutations found") || error.toString().contains("No mutations found")) {
+            return PitestResult.NO_MUTATIONS
+        } else {
+            return PitestResult.FAILURE
+        }
     }
 
     private List<String> findMissingClasses(File errorLogFile) {
@@ -262,6 +349,39 @@ class PitestPlugin implements Plugin<Project> {
                 }
             }
         }
-    return missingClasses
-}
+        return missingClasses
+    }
+
+    private boolean isByteBuddyAgentConfigured(Project project) {
+        return project.tasks.withType(Test).any { testTask ->
+            testTask.jvmArgs.any { arg -> arg.contains('byte-buddy-agent') }
+        }
+    }
+
+    // address issue https://github.com/mockito/mockito/issues/1879, when user use inline mockito, it will have byte-buddy-agent in classpath, add it into javaagent as per discussion in the issue
+    private void configureByteBuddyAgent(Project project) {
+        if (!isByteBuddyAgentConfigured(project)) {
+            project.afterEvaluate {
+                project.tasks.withType(Test).each { testTask ->
+                    testTask.doFirst {
+                        def byteBuddyAgent = project.configurations.testRuntimeClasspath.find { it.name.contains('byte-buddy-agent') }
+                        if (byteBuddyAgent) {
+                            testTask.jvmArgs "-javaagent:${byteBuddyAgent.absolutePath}"
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private void checkRequiredDependencies(Project project, PitestExtension extension) {
+        def missingJars = extension.additionalRequiredJars.findAll { jarName ->
+            findJar(project, extension, jarName) == null
+        }
+        
+        if (!missingJars.isEmpty()) {
+            project.logger.warn("The following dependencies are missing and may cause Pitest to fail or have limited functionality: ${missingJars.join(', ')}")
+            project.logger.warn("Please add these dependencies to your project or specify their location using additionalJarDirectories in the pitestConfig.")
+        }
+    }
 }

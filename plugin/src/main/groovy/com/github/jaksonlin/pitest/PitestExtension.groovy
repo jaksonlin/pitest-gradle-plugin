@@ -22,4 +22,8 @@ class PitestExtension {
     List<String> includedTestNGGroups = []
     List<String> excludedTestNGGroups = []
     List<String> avoidCallsTo = []
+    boolean useByteBuddyAgent = true
+
+    // Additional required jars
+    List<String> additionalRequiredJars = ['commons-text', 'commons-lang3', 'byte-buddy-agent']
 }
