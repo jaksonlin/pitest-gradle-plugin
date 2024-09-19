@@ -49,12 +49,12 @@ class PitestPlugin implements Plugin<Project> {
             }
 
             doLast {
-                def pitestError = [:]
+                def pitestErrors = [:]
                 testResults.each { testClassName, passed ->
                     if (passed) {
                         println "Running pitest for $testClassName"
                         if(!runPitestForClass(project, testClassName, extension)){
-                            pitestError[testClassName] = true
+                            pitestErrors[testClassName] = true
                             if (extension.tuningMode) {
                                 return // This will break out of the each loop if in tuning mode
                             }
@@ -77,58 +77,58 @@ class PitestPlugin implements Plugin<Project> {
             def logFiles = createLogFiles(project, testClassName)
             def classpath = buildClasspath(project, extension)
             def classpathFile = createClasspathFile(project, testClassName, classpath)
-                def pitestCp = getPitestClasspath(project, extension)
-                def sourceDirs = getSourceDirs(project)
-                def targetClass = getTargetClass(testClassName)
-                def reportDir = getReportDir(project, targetClass)
+            def pitestCp = getPitestClasspath(project, extension)
+            def sourceDirs = getSourceDirs(project)
+            def targetClass = getTargetClass(testClassName)
+            def reportDir = getReportDir(project, targetClass)
 
-                def pitestCommand = buildPitestCommand(extension, project, reportDir, sourceDirs, targetClass, testClassName, classpathFile, pitestCp)
-                project.logger.info("Pitest command for $testClassName: ${pitestCommand.join(' ')}")
+            def pitestCommand = buildPitestCommand(extension, project, reportDir, sourceDirs, targetClass, testClassName, classpathFile, pitestCp)
+            project.logger.info("Pitest command for $testClassName: ${pitestCommand.join(' ')}")
+        
+            if (pitestCommand.isEmpty()) {
+                project.logger.error("Pitest command is empty for $testClassName")
+                return false
+            }
+
+            logCommand(logFiles.commandLog, pitestCommand)
+            if (extension.useByteBuddyAgent) {
+                project.logger.info("Running Pitest with ByteBuddy agent for $testClassName")
+            } else {
+                project.logger.info("Running Pitest without ByteBuddy agent for $testClassName")
+            }
+
+            def result = executePitestCommand(pitestCommand, logFiles)
             
-                if (pitestCommand.isEmpty()) {
-                    project.logger.error("Pitest command is empty for $testClassName")
-                    return false
-                }
-
-                logCommand(logFiles.commandLog, pitestCommand)
-                if (extension.useByteBuddyAgent) {
-                    project.logger.info("Running Pitest with ByteBuddy agent for $testClassName")
-                } else {
-                    project.logger.info("Running Pitest without ByteBuddy agent for $testClassName")
-                }
-
-                def result = executePitestCommand(pitestCommand, logFiles)
-                
-                switch (result) {
-                    case PitestResult.SUCCESS:
-                        project.logger.info("Pitest succeeded for $testClassName")
-                        return true
-                    case PitestResult.NO_MUTATIONS:
-                        project.logger.info("No mutations found for $testClassName. This is likely a POJO or empty class.")
-                        return true
-                    case PitestResult.FAILURE:
-                        project.logger.error("Pitest failed for $testClassName")
-                        def rerunCommand = pitestCommand.join(' ')
-                        project.logger.error("Command to rerun Pitest:")
-                        project.logger.error(rerunCommand)
-                        // Append rerun command to the command log file
-                        logFiles.commandLog.append("\n\nRerun command:\n${rerunCommand}")
-                        
-                        if (extension.tuningMode) {
-                            def missingClasses = findMissingClasses(logFiles.errorLog)
-                            if (missingClasses) {
-                                project.logger.error("Missing class files detected:")
-                                missingClasses.each { project.logger.error(it) }
-                                
-                                // Append missing classes to the command log file
-                                logFiles.commandLog.append("\n\nMissing class files:\n${missingClasses.join('\n')}")
-                            }
+            switch (result) {
+                case PitestResult.SUCCESS:
+                    project.logger.info("Pitest succeeded for $testClassName")
+                    return true
+                case PitestResult.NO_MUTATIONS:
+                    project.logger.info("No mutations found for $testClassName. This is likely a POJO or empty class.")
+                    return true
+                case PitestResult.FAILURE:
+                    project.logger.error("Pitest failed for $testClassName")
+                    def rerunCommand = pitestCommand.join(' ')
+                    project.logger.error("Command to rerun Pitest:")
+                    project.logger.error(rerunCommand)
+                    // Append rerun command to the command log file
+                    logFiles.commandLog.append("\n\nRerun command:\n${rerunCommand}")
+                    
+                    if (extension.tuningMode) {
+                        def missingClasses = findMissingClasses(logFiles.errorLog)
+                        if (missingClasses) {
+                            project.logger.error("Missing class files detected:")
+                            missingClasses.each { project.logger.error(it) }
+                            
+                            // Append missing classes to the command log file
+                            logFiles.commandLog.append("\n\nMissing class files:\n${missingClasses.join('\n')}")
                         }
-                        return false
-                    default:
-                        project.logger.error("Unknown Pitest result: $result")
-                        return false
-                }
+                    }
+                    return false
+                default:
+                    project.logger.error("Unknown Pitest result: $result")
+                    return false
+            }
 
         } catch (Exception ex) {
             project.logger.error("Error running Pitest for $testClassName: ${ex.message}")
