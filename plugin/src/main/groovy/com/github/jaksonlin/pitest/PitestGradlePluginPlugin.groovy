@@ -306,6 +306,7 @@ class PitestPlugin implements Plugin<Project> {
             '--timeoutConst', extension.timeoutConst.toString(),
             '--mutators', extension.mutators.join(','),
             '--timeoutFactor', extension.timeoutFactor.toString(),
+            '--exportLineCoverage', "true",
             '--verbose', extension.verbose.toString()
         ]
 
