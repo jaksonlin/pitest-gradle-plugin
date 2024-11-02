@@ -4,7 +4,8 @@ import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.tasks.testing.Test
 import org.gradle.api.tasks.testing.TestResult
-
+import com.github.jaksonlin.pitest.report.MutationReportParser
+import com.github.jaksonlin.pitest.report.MutationScoreReporter
 
 class PitestPlugin implements Plugin<Project> {
     private enum PitestResult {
@@ -24,6 +25,11 @@ class PitestPlugin implements Plugin<Project> {
         project.task('mutest', type: Test) {
             doFirst {
                 maxParallelForks = 1
+                filter {
+                    extension.excludedTestClasses.each { pattern ->
+                        excludeTestsMatching(pattern)
+                    }
+                }
             }
             testLogging {
                 println("test start")
@@ -40,11 +46,14 @@ class PitestPlugin implements Plugin<Project> {
             // Store test results in a shared map
             def testResults = [:]
             beforeTest { descriptor ->
-                testResults[descriptor.getClassName()] = true
+                def testClassName = descriptor.getClassName()
+                testResults[testClassName] = true
+                project.logger.debug("Running test for $testClassName")
             }
             afterTest { descriptor, result ->
+                def testClassName = descriptor.getClassName()
                 if (result.getResultType() == TestResult.ResultType.FAILURE) {
-                    testResults[descriptor.getClassName()] = false
+                    testResults[testClassName] = false
                 }
             }
 
@@ -71,7 +80,37 @@ class PitestPlugin implements Plugin<Project> {
             }
         }
     }
+    // Add helper method (same as before)
+    private boolean shouldExcludeTestClass(String testClassName, List<String> excludePatterns) {
+        if (excludePatterns.isEmpty()) {
+            return false
+        }
+        
+        return excludePatterns.any { pattern ->
+            def regex = pattern
+                .replace(".", "\\.")
+                .replace("**", ".*")
+                .replace("*", "[^.]*")
+            testClassName ==~ regex
+        }
+    }
 
+    private void generateMutationReport(Project project, String testClassName) {
+        def xmlReportFile = new File(project.buildDir, "reports/pitest/$testClassName/mutations.xml")
+        if (xmlReportFile.exists()) {
+            def mutations = MutationReportParser.parseMutationsFromXml(xmlReportFile.absolutePath)
+            def reporter = new MutationScoreReporter()
+            def report = reporter.generateReport(mutations)
+            
+            // Write to a text file
+            def reportFile = new File(project.buildDir, "reports/pitest/$testClassName/mutation-report.txt")
+            reportFile.parentFile.mkdirs()
+            reportFile.text = report
+            
+            // Also log to console
+            project.logger.lifecycle(report)
+        }
+    }
     private boolean runPitestForClass(Project project, String testClassName, PitestExtension extension) {
         try {            
             def logFiles = createLogFiles(project, testClassName)
@@ -102,6 +141,7 @@ class PitestPlugin implements Plugin<Project> {
             switch (result) {
                 case PitestResult.SUCCESS:
                     project.logger.info("Pitest succeeded for $testClassName")
+                    generateMutationReport(project, testClassName)
                     return true
                 case PitestResult.NO_MUTATIONS:
                     project.logger.info("No mutations found for $testClassName. This is likely a POJO or empty class.")

@@ -20,11 +20,18 @@ version = '1.0.0'
 repositories {
     // Use Maven Central for resolving dependencies.
     mavenCentral()
+    flatDir {
+        dirs '../lib'
+    }
 }
 
 dependencies {
     implementation gradleApi()
     implementation localGroovy()
+
+    // Include all JARs from the lib directory
+    implementation fileTree(dir: '../lib', include: ['*.jar'])
+    
     // Use the awesome Spock testing and specification framework
     testImplementation libs.spock.core
 
@@ -36,7 +43,7 @@ gradlePlugin {
     plugins {
         pitestPlugin {
             id = 'com.github.jaksonlin.pitest'
-            implementationClass = 'com.github.jaksonlin.pitest.PitestPlugin'
+            implementationClass = 'com.github.jaksonlin.pitest.PitestGradlePluginPlugin'
         }
     }
 }
@@ -70,6 +77,13 @@ tasks.named('test') {
 }
 
 
+// Bundle the dependencies into the plugin JAR
+jar {
+    from {
+        configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+    }
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}
 
 publishing {
     publications {
