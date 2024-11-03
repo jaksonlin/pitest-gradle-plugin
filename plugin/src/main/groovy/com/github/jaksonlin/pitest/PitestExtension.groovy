@@ -11,6 +11,7 @@ class PitestExtension {
     double timeoutFactor = 1.5
     boolean verbose = true
     boolean tuningMode = false
+    String javaBin = null
 
     // New fields we've added
     List<String> additionalClasspathElements = []

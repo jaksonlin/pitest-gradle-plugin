@@ -78,12 +78,12 @@ tasks.named('test') {
 
 
 // Bundle the dependencies into the plugin JAR
-jar {
-    from {
-        configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
-    }
-    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-}
+// jar {
+//     from {
+//         configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+//     }
+//     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+// }
 
 publishing {
     publications {
