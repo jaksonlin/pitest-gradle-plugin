@@ -20,18 +20,12 @@ version = '1.0.0'
 repositories {
     // Use Maven Central for resolving dependencies.
     mavenCentral()
-    flatDir {
-        dirs '../lib'
-    }
 }
 
 dependencies {
     implementation gradleApi()
     implementation localGroovy()
 
-    // Include all JARs from the lib directory
-    implementation fileTree(dir: '../lib', include: ['*.jar'])
-    
     // Use the awesome Spock testing and specification framework
     testImplementation libs.spock.core
 
@@ -76,14 +70,6 @@ tasks.named('test') {
     useJUnitPlatform()
 }
 
-
-// Bundle the dependencies into the plugin JAR
-// jar {
-//     from {
-//         configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
-//     }
-//     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-// }
 
 publishing {
     publications {
