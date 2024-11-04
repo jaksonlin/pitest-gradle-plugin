@@ -108,4 +108,14 @@ This will:
 - The plugin will only run pitest on test classes that the test cases for them are passed.
 
 
-
+```groovy
+buildscript {
+    repositories {
+        maven { url "http://cicd.kingdee.com:30081/repository/maven-public/" }
+        maven { url "http://172.19.77.89:8080/maven/" }
+    }
+    dependencies {
+        classpath "com.github.jaksonlin:pitest-gradle-plugin:1.0.0"
+    }
+}
+```

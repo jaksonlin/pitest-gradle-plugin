@@ -25,6 +25,7 @@ repositories {
 dependencies {
     implementation gradleApi()
     implementation localGroovy()
+
     // Use the awesome Spock testing and specification framework
     testImplementation libs.spock.core
 
@@ -36,7 +37,7 @@ gradlePlugin {
     plugins {
         pitestPlugin {
             id = 'com.github.jaksonlin.pitest'
-            implementationClass = 'com.github.jaksonlin.pitest.PitestPlugin'
+            implementationClass = 'com.github.jaksonlin.pitest.PitestGradlePluginPlugin'
         }
     }
 }
@@ -68,7 +69,6 @@ tasks.named('test') {
     // Use JUnit Jupiter for unit tests.
     useJUnitPlatform()
 }
-
 
 
 publishing {

@@ -11,6 +11,7 @@ class PitestExtension {
     double timeoutFactor = 1.5
     boolean verbose = true
     boolean tuningMode = false
+    String javaBin = null
 
     // New fields we've added
     List<String> additionalClasspathElements = []
@@ -23,6 +24,7 @@ class PitestExtension {
     List<String> excludedTestNGGroups = []
     List<String> avoidCallsTo = []
     boolean useByteBuddyAgent = true
+    List<String> excludedTestClasses = [] // exclude test classes from mutation testing
 
     // Additional required jars
     List<String> additionalRequiredJars = ['commons-text', 'commons-lang3', 'byte-buddy-agent']

@@ -5,8 +5,7 @@ import org.gradle.api.Project
 import org.gradle.api.tasks.testing.Test
 import org.gradle.api.tasks.testing.TestResult
 
-
-class PitestPlugin implements Plugin<Project> {
+class PitestGradlePluginPlugin implements Plugin<Project> {
     private enum PitestResult {
         SUCCESS, NO_MUTATIONS, FAILURE
     }
@@ -40,17 +39,23 @@ class PitestPlugin implements Plugin<Project> {
             // Store test results in a shared map
             def testResults = [:]
             beforeTest { descriptor ->
-                testResults[descriptor.getClassName()] = true
+                def testClassName = descriptor.getClassName()
+                testResults[testClassName] = true
+                project.logger.debug("Running test for $testClassName")
             }
             afterTest { descriptor, result ->
+                def testClassName = descriptor.getClassName()
                 if (result.getResultType() == TestResult.ResultType.FAILURE) {
-                    testResults[descriptor.getClassName()] = false
+                    testResults[testClassName] = false
                 }
             }
 
             doLast {
                 def pitestErrors = [:]
                 testResults.each { testClassName, passed ->
+                    if (shouldExcludeTestClass(testClassName, extension.excludedTestClasses)) {
+                        return
+                    }
                     if (passed) {
                         println "Running pitest for $testClassName"
                         if(!runPitestForClass(project, testClassName, extension)){
@@ -71,6 +76,14 @@ class PitestPlugin implements Plugin<Project> {
             }
         }
     }
+    // Add helper method (same as before)
+    private boolean shouldExcludeTestClass(String testClassName, List<String> excludedSubStrings) {
+        if (excludedSubStrings.isEmpty()) {
+            return false
+        }
+        return excludedSubStrings.any { testClassName.contains(it) }
+    }
+
 
     private boolean runPitestForClass(Project project, String testClassName, PitestExtension extension) {
         try {            
@@ -146,40 +159,76 @@ class PitestPlugin implements Plugin<Project> {
         ]
     }
 
-    private Set<File> buildClasspath(Project project, PitestExtension extension) {
-        def classpath = new HashSet<File>()
-    
-        // Add test and main runtime classpaths
-        classpath.addAll(project.sourceSets.test.runtimeClasspath.files)
-        classpath.addAll(project.sourceSets.main.runtimeClasspath.files)
+    private ArrayList<File> buildClasspath(Project project, PitestExtension extension) {
+        def classpath = new ArrayList<File>()
+        
+        // Add source and test directories first
+        classpath.addAll(project.sourceSets.main.output.classesDirs.files)
+        classpath.addAll(project.sourceSets.test.output.classesDirs.files)
+        // Add runtime classpaths
+        project.sourceSets.test.runtimeClasspath.each { entry ->
+            if (entry instanceof File) {
+                classpath.add(entry)
+            } else {
+                project.logger.debug("Skipping non-File entry in test runtime classpath: ${entry?.class?.name} - ${entry}")
+            }
+        }
+        
+        project.sourceSets.main.runtimeClasspath.each { entry ->
+            if (entry instanceof File) {
+                classpath.add(entry)
+            } else {
+                project.logger.debug("Skipping non-File entry in main runtime classpath: ${entry?.class?.name} - ${entry}")
+            }
+        }
+        
+        
+        // Create a separate list for other classpath entries
+        def otherClasspathEntries = new ArrayList<File>()
+        
         
         // Add additional classpath elements
         extension.additionalClasspathElements.each { element ->
-            classpath.addAll(project.files(element).files)
+            project.files(element).files.each { file ->
+                if (file instanceof File) {
+                    otherClasspathEntries.add(file)
+                } else {
+                    project.logger.debug("Skipping non-File entry in additional classpath: ${file?.class?.name} - ${file}")
+                }
+            }
         }
         
         // Add JARs from additional directories
         extension.additionalJarDirectories.each { dirPath ->
-            addJarsFromDirectory(project, classpath, dirPath)
+            addJarsFromDirectory(project, otherClasspathEntries, dirPath)
         }
         
-        // Ensure necessary JARs are in the classpath
+        // Add required JARs
         extension.additionalRequiredJars.each { jarName ->
             def jar = findJar(project, extension, jarName)
             if (jar) {
-                classpath.add(jar)
+                otherClasspathEntries.add(jar)
             }
         }
+        
+        // Convert to File objects, remove duplicates, and sort by path
+        otherClasspathEntries = otherClasspathEntries
+            .findAll { it instanceof File }
+            .unique()
+            .sort { it.absolutePath }
+        
+        // Add sorted entries to main classpath
+        classpath.addAll(otherClasspathEntries)
         
         return classpath
     }
 
-    private void addJarsFromDirectory(Project project, Set<File> classpath, String dirPath) {
+    private void addJarsFromDirectory(Project project, ArrayList<File> classpath, String dirPath) {
         def dir = new File(dirPath)
         if (dir.exists() && dir.isDirectory()) {
             dir.eachFileRecurse(groovy.io.FileType.FILES) { file ->
                 if (file.name.endsWith('.jar')) {
-                    classpath += project.files(file)
+                    classpath.add(project.files(file))
                 }
             }
         } else {
@@ -187,7 +236,7 @@ class PitestPlugin implements Plugin<Project> {
         }
     }
 
-    private File createClasspathFile(Project project, String testClassName, Set<File> classpath) {
+    private File createClasspathFile(Project project, String testClassName, ArrayList<File> classpath) {
         def classpathFile = project.file("pitest-classpath-${testClassName}.txt")
         classpathFile.withWriter { writer ->
             classpath.each { entry -> writer.writeLine entry.absolutePath }
@@ -284,9 +333,10 @@ class PitestPlugin implements Plugin<Project> {
 
         // replicate the agent option in starting the java, so that in the separated jvm forked by pitest, it will have byte buddy agent to fix the issue of inline mockito
         def byteBuddyAgent = project.configurations.testRuntimeClasspath.find { it.name.contains('byte-buddy-agent') }
-    
+        // use the java bin from extension if it is set
+        def javaBin = extension.javaBin ?: 'java'
         def command = [
-            'java'
+            javaBin
         ]
         
         if (extension.useByteBuddyAgent && byteBuddyAgent) {
